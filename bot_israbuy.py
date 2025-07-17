@@ -5,7 +5,7 @@ import sqlite3
 import os
 from dotenv import load_dotenv
 
-# --- CONFIGURAÇÕES (sem alterações) ---
+# --- CONFIGURAÇÕES ---
 load_dotenv()
 BOT_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = 897650833888534588
@@ -40,7 +40,6 @@ def find_member_by_name(guild, name_to_find):
     member = discord.utils.find(lambda m: m.name.lower() == name_lower, guild.members)
     return member
 
-# --- BOTÕES DE CORREÇÃO (COM O DEDO-DURO) ---
 class CorrectionView(discord.ui.View):
     def __init__(self, original_message_id, new_attendant):
         super().__init__(timeout=300)
@@ -49,38 +48,20 @@ class CorrectionView(discord.ui.View):
 
     @discord.ui.button(label="Sim, Corrigir", style=discord.ButtonStyle.success)
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        
-        # --- INÍCIO DO MODO DEDO-DURO ---
-        print("\n\n--- DIAGNÓSTICO DO BOTÃO 'Sim, Corrigir' ---")
-        print(f"Timestamp: {interaction.created_at}")
-        print(f"Quem clicou: {interaction.user.display_name} (ID: {interaction.user.id})")
-        print(f"ID da mensagem a ser corrigida: {self.original_message_id}")
-        print(f"Novo atendente a ser salvo: {self.new_attendant.display_name} (ID: {self.new_attendant.id})")
-        
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        
-        print("Executando o comando UPDATE no banco de dados...")
         cursor.execute(
             "UPDATE sales SET attendant_id = ?, attendant_name = ? WHERE message_id = ?",
             (self.new_attendant.id, self.new_attendant.display_name, self.original_message_id)
         )
-        
-        # O cursor.rowcount nos diz quantas linhas foram afetadas pelo último comando.
         rows_affected = cursor.rowcount
-        print(f"Comando UPDATE executado. Número de linhas afetadas: {rows_affected}")
-        
         conn.commit()
-        print("Commit no banco de dados realizado.")
         conn.close()
-        print("Conexão com o banco de dados fechada.")
-        print("--- FIM DO DIAGNÓSTICO DO BOTÃO ---\n\n")
-        # --- FIM DO MODO DEDO-DURO ---
-
-        if rows_affected == 0:
-             await interaction.response.send_message(f"⚠️ **Erro de Atualização:** A venda não foi encontrada no banco de dados para ser corrigida. Nenhuma alteração foi feita.", ephemeral=True)
-        else:
+        
+        if rows_affected > 0:
             await interaction.response.send_message(f"✅ Atendente da venda corrigido para {self.new_attendant.mention}!", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ A venda não foi encontrada no banco de dados para ser corrigida.", ephemeral=True)
 
         for item in self.children:
             item.disabled = True
@@ -93,14 +74,11 @@ class CorrectionView(discord.ui.View):
             item.disabled = True
         await interaction.message.edit(view=self)
 
-# --- CLASSE PRINCIPAL DO BOT (sem alterações significativas) ---
 class IsraBuyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        intents.guilds = True
-        intents.messages = True
-        intents.message_content = True
-        intents.members = True
+        intents.guilds = True; intents.messages = True
+        intents.message_content = True; intents.members = True
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
@@ -113,24 +91,39 @@ class IsraBuyBot(commands.Bot):
         print(f'Bot conectado como {self.user}')
 
     async def on_message(self, message: discord.Message):
-        if message.author.bot and message.author.id != LOG_BOT_ID: return
-        if message.author == self.user: return
+        # --- MURALHA ANTI-LOOP ---
+        # Se a mensagem for do próprio bot, ignora imediatamente.
+        if message.author.id == self.user.id:
+            return
 
+        # Ignora outros bots, exceto o bot de logs
+        if message.author.bot and message.author.id != LOG_BOT_ID:
+            return
+
+        # Lógica de Nova Venda
         if message.channel.id == LOG_CHANNEL_ID and message.author.id == LOG_BOT_ID and message.embeds:
             embed = message.embeds[0]
             if embed.title and "Log de Compra" in embed.title:
-                attendant_name_str = next((field.value.strip().replace('@', '') for field in embed.fields if field.name == "Atendente"), None)
+                attendant_name_str = next((f.value.strip().replace('@', '') for f in embed.fields if f.name=="Atendente"),None)
                 if attendant_name_str:
                     guild = self.get_guild(GUILD_ID)
                     attendant_member = find_member_by_name(guild, attendant_name_str)
                     attendant_id = attendant_member.id if attendant_member else 0
                     conn = sqlite3.connect(DB_PATH)
                     cursor = conn.cursor()
-                    cursor.execute("INSERT INTO sales (message_id, attendant_id, attendant_name) VALUES (?, ?, ?)",(message.id, attendant_id, attendant_name_str))
+                    cursor.execute("INSERT OR IGNORE INTO sales (message_id, attendant_id, attendant_name) VALUES (?, ?, ?)",(message.id, attendant_id, attendant_name_str))
                     conn.commit()
+                    if attendant_id != 0 and cursor.rowcount > 0: # Apenas se a venda foi nova
+                        cursor.execute("SELECT COUNT(*) FROM sales WHERE attendant_id = ?", (attendant_id,))
+                        sales_count = cursor.fetchone()[0]
+                        if sales_count > 0 and sales_count % 10 == 0:
+                            salary_channel = self.get_channel(SALARY_CHANNEL_ID)
+                            if salary_channel:
+                                await salary_channel.send(f"🎉 Parabéns {attendant_member.mention}! Você alcançou **{sales_count}** vendas!")
                     conn.close()
                     await self.update_total_sales_message()
 
+        # Lógica de Correção
         if message.channel.id == LOG_CHANNEL_ID and "atendente" in message.content.lower() and message.mentions:
             target_mention = discord.utils.find(lambda m: not m.bot, message.mentions)
             if not target_mention: return
@@ -143,8 +136,7 @@ class IsraBuyBot(commands.Bot):
                 async for old_message in message.channel.history(limit=10, before=message):
                     if old_message.author.id == LOG_BOT_ID and old_message.embeds:
                         if old_message.embeds[0].title and "Log de Compra" in old_message.embeds[0].title:
-                            message_to_correct = old_message
-                            break
+                            message_to_correct = old_message; break
             if message_to_correct:
                 view = CorrectionView(message_to_correct.id, corrected_attendant)
                 await message.reply(f"Você deseja corrigir o atendente da venda (`{message_to_correct.id}`) para {corrected_attendant.mention}?", view=view)
@@ -165,7 +157,6 @@ class IsraBuyBot(commands.Bot):
         if message_to_edit: await message_to_edit.edit(content=content)
         else: await salary_channel.send(content)
 
-# --- COMANDOS E INICIALIZAÇÃO (sem alterações) ---
 bot = IsraBuyBot()
 @bot.tree.command(name="salario", description="Calcula o salário de um atendente com base nas vendas.")
 @app_commands.describe(membro="O membro para calcular o salário.")
