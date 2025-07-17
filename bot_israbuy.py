@@ -101,43 +101,38 @@ class IsraBuyBot(commands.Bot):
         if message.author == self.user:
             return
 
-        # Lógica de Nova Venda (Minimizada para focar no debug)
+        # Lógica de Nova Venda
         if message.channel.id == LOG_CHANNEL_ID and message.author.id == LOG_BOT_ID and message.embeds:
-            # ... a lógica de nova venda continua a mesma ...
-            pass # Vamos ignorar por agora para focar no debug
+            embed = message.embeds[0]
+            if embed.title and "Log de Compra" in embed.title:
+                attendant_name_str = next((field.value.strip().replace('@', '') for field in embed.fields if field.name == "Atendente"), None)
+                if attendant_name_str:
+                    guild = self.get_guild(GUILD_ID)
+                    attendant_member = find_member_by_name(guild, attendant_name_str)
+                    attendant_id = attendant_member.id if attendant_member else 0
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO sales (message_id, attendant_id, attendant_name) VALUES (?, ?, ?)",(message.id, attendant_id, attendant_name_str))
+                    conn.commit()
+                    if attendant_id != 0:
+                        cursor.execute("SELECT COUNT(*) FROM sales WHERE attendant_id = ?", (attendant_id,))
+                        sales_count = cursor.fetchone()[0]
+                        if sales_count > 0 and sales_count % 10 == 0:
+                            salary_channel = self.get_channel(SALARY_CHANNEL_ID)
+                            if salary_channel:
+                                await salary_channel.send(f"🎉 Parabéns {attendant_member.mention}! Você alcançou a marca de **{sales_count}** vendas!")
+                    conn.close()
+                    await self.update_total_sales_message()
 
-        # --- MODO DE DIAGNÓSTICO ATIVADO ---
+        # --- Lógica de Correção com o Filtro Final ---
         if message.channel.id == LOG_CHANNEL_ID and "atendente" in message.content.lower() and message.mentions:
             
-            # IMPRIMINDO TODAS AS INFORMAÇÕES POSSÍVEIS NO LOG DA RAILWAY
-            print("\n\n--- INICIANDO MODO DE DIAGNÓSTICO DE CORREÇÃO ---")
-            print(f"Timestamp: {message.created_at}")
-            print(f"Conteúdo da Mensagem: '{message.content}'")
-            print(f"Autor da Mensagem: {message.author.display_name} (ID: {message.author.id})")
-            print(f"ID do meu próprio bot: {self.user.id}")
-            
-            print(f"\nAnalisando a lista 'message.mentions' ({len(message.mentions)} membros encontrados):")
-            if not message.mentions:
-                print("  A lista de menções está VAZIA.")
-            else:
-                for i, member in enumerate(message.mentions):
-                    print(f"  Membro [{i}]: {member.display_name} (Username: {member.name}, ID: {member.id})")
-            
-            print("\nTentando filtrar a menção correta (qualquer um que NÃO seja o meu bot):")
-            target_mention = discord.utils.find(lambda m: m.id != self.user.id, message.mentions)
-            
-            if target_mention:
-                print(f"Resultado do filtro: {target_mention.display_name} (ID: {target_mention.id}) foi encontrado.")
-            else:
-                print("Resultado do filtro: NENHUMA outra menção foi encontrada além do próprio bot (ou a lista estava vazia).")
-            
-            print("--- FIM DO DIAGNÓSTICO ---\n\n")
+            # FILTRO DEFINITIVO: Pega o primeiro membro mencionado que NÃO é um bot.
+            target_mention = discord.utils.find(lambda m: not m.bot, message.mentions)
 
-            # A lógica antiga continua aqui para vermos o resultado final
             if not target_mention:
-                await message.reply("Debug: Não encontrei um alvo válido na mensagem.", delete_after=10)
-                return
-            
+                return # Ignora se nenhuma pessoa foi mencionada
+
             corrected_attendant = target_mention
             message_to_correct = None
 
@@ -157,12 +152,27 @@ class IsraBuyBot(commands.Bot):
                 await message.reply(f"Você deseja corrigir o atendente da venda (`{message_to_correct.id}`) para {corrected_attendant.mention}?", view=view)
 
     async def update_total_sales_message(self):
-        pass # Desativado temporariamente
+        salary_channel = self.get_channel(SALARY_CHANNEL_ID)
+        if not salary_channel: return
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM sales")
+        total_sales = cursor.fetchone()[0]
+        conn.close()
+        message_to_edit = None
+        async for msg in salary_channel.history(limit=100):
+            if msg.author == self.user and "Total de Vendas Registradas" in msg.content:
+                message_to_edit = msg
+                break
+        content = f"📊 **Total de Vendas Registradas:** {total_sales}"
+        if message_to_edit:
+            await message_to_edit.edit(content=content)
+        else:
+            await salary_channel.send(content)
 
-# As outras funções (salario, etc) continuam existindo mas não são o foco.
-# ... o resto do código continua igual ...
 # --- COMANDOS E INICIALIZAÇÃO ---
 bot = IsraBuyBot()
+
 @bot.tree.command(name="salario", description="Calcula o salário de um atendente com base nas vendas.")
 @app_commands.describe(membro="O membro para calcular o salário.")
 async def salario(interaction: discord.Interaction, membro: discord.Member):
@@ -183,6 +193,7 @@ async def salario(interaction: discord.Interaction, membro: discord.Member):
     embed.add_field(name=f"🎯 Meta de Comissão (R$ {META_BRL:.2f})", value=f"Progresso: **{progresso_meta:.2f}%** (`{sales_count}` de `{META_VENDAS}` vendas)", inline=False)
     embed.set_footer(text=f"ID do Atendente: {membro.id}")
     await interaction.followup.send(embed=embed)
+
 if __name__ == "__main__":
     setup_database()
     if BOT_TOKEN:
