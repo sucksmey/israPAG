@@ -41,8 +41,9 @@ def find_member_by_name(guild, name_to_find):
     return member
 
 class CorrectionView(discord.ui.View):
-    def __init__(self, original_message_id, new_attendant):
+    def __init__(self, bot_instance, original_message_id, new_attendant):
         super().__init__(timeout=300)
+        self.bot = bot_instance
         self.original_message_id = original_message_id
         self.new_attendant = new_attendant
 
@@ -50,18 +51,28 @@ class CorrectionView(discord.ui.View):
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
+        
+        # 1. Tenta ATUALIZAR a venda
         cursor.execute(
             "UPDATE sales SET attendant_id = ?, attendant_name = ? WHERE message_id = ?",
             (self.new_attendant.id, self.new_attendant.display_name, self.original_message_id)
         )
         rows_affected = cursor.rowcount
+        
+        # 2. Se não encontrou (0 linhas afetadas), CRIA a venda
+        if rows_affected == 0:
+            cursor.execute(
+                "INSERT OR IGNORE INTO sales (message_id, attendant_id, attendant_name) VALUES (?, ?, ?)",
+                (self.original_message_id, self.new_attendant.id, self.new_attendant.display_name)
+            )
+        
         conn.commit()
         conn.close()
         
-        if rows_affected > 0:
-            await interaction.response.send_message(f"✅ Atendente da venda corrigido para {self.new_attendant.mention}!", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"⚠️ A venda não foi encontrada no banco de dados para ser corrigida.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Venda registrada/corrigida para {self.new_attendant.mention}!", ephemeral=True)
+        
+        # Atualiza a contagem total de vendas no canal
+        await self.bot.update_total_sales_message()
 
         for item in self.children:
             item.disabled = True
@@ -91,14 +102,8 @@ class IsraBuyBot(commands.Bot):
         print(f'Bot conectado como {self.user}')
 
     async def on_message(self, message: discord.Message):
-        # --- MURALHA ANTI-LOOP ---
-        # Se a mensagem for do próprio bot, ignora imediatamente.
-        if message.author.id == self.user.id:
-            return
-
-        # Ignora outros bots, exceto o bot de logs
-        if message.author.bot and message.author.id != LOG_BOT_ID:
-            return
+        if message.author.id == self.user.id: return
+        if message.author.bot and message.author.id != LOG_BOT_ID: return
 
         # Lógica de Nova Venda
         if message.channel.id == LOG_CHANNEL_ID and message.author.id == LOG_BOT_ID and message.embeds:
@@ -113,7 +118,7 @@ class IsraBuyBot(commands.Bot):
                     cursor = conn.cursor()
                     cursor.execute("INSERT OR IGNORE INTO sales (message_id, attendant_id, attendant_name) VALUES (?, ?, ?)",(message.id, attendant_id, attendant_name_str))
                     conn.commit()
-                    if attendant_id != 0 and cursor.rowcount > 0: # Apenas se a venda foi nova
+                    if attendant_id != 0 and cursor.rowcount > 0:
                         cursor.execute("SELECT COUNT(*) FROM sales WHERE attendant_id = ?", (attendant_id,))
                         sales_count = cursor.fetchone()[0]
                         if sales_count > 0 and sales_count % 10 == 0:
@@ -138,8 +143,9 @@ class IsraBuyBot(commands.Bot):
                         if old_message.embeds[0].title and "Log de Compra" in old_message.embeds[0].title:
                             message_to_correct = old_message; break
             if message_to_correct:
-                view = CorrectionView(message_to_correct.id, corrected_attendant)
-                await message.reply(f"Você deseja corrigir o atendente da venda (`{message_to_correct.id}`) para {corrected_attendant.mention}?", view=view)
+                # Passa a instância do bot (self) para a View
+                view = CorrectionView(self, message_to_correct.id, corrected_attendant)
+                await message.reply(f"Você deseja corrigir/registrar a venda (`{message_to_correct.id}`) para {corrected_attendant.mention}?", view=view)
 
     async def update_total_sales_message(self):
         salary_channel = self.get_channel(SALARY_CHANNEL_ID)
