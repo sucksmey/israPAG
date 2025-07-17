@@ -7,8 +7,6 @@ import re
 from dotenv import load_dotenv
 
 # --- CONFIGURAÇÕES ---
-# Carrega as variáveis de ambiente do arquivo .env (usado localmente)
-# Na Railway, as variáveis serão configuradas na interface do projeto
 load_dotenv()
 BOT_TOKEN = os.getenv('DISCORD_TOKEN')
 
@@ -17,6 +15,9 @@ GUILD_ID = 897650833888534588
 LOG_CHANNEL_ID = 1382340441579720846
 SALARY_CHANNEL_ID = 1385371013226827986
 
+# ID do bot que envia os logs de compra
+LOG_BOT_ID = 1379083772766720000
+
 # --- CONFIGURAÇÕES DE SALÁRIO ---
 COMISSAO_POR_VENDA_ROBUX = 10
 COMISSAO_POR_VENDA_BRL = 0.34
@@ -24,12 +25,9 @@ META_VENDAS = 2942
 META_BRL = 1000.00
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
-# O caminho '/data/' corresponde ao Volume que você criará na Railway
 DB_PATH = '/data/sales_data.db'
 
 def setup_database():
-    """Cria e configura o banco de dados SQLite no caminho do Volume."""
-    # Garante que o diretório /data exista na Railway
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -91,7 +89,7 @@ class IsraBuyBot(commands.Bot):
 
     async def on_ready(self):
         print(f'Bot conectado como {self.user}')
-        print('Iniciando varredura do histórico de logs...')
+        print('Iniciando varredura do histórico de logs com o ID do autor corrigido...')
         await self.scan_history()
 
     async def scan_history(self):
@@ -104,7 +102,8 @@ class IsraBuyBot(commands.Bot):
         cursor = conn.cursor()
         processed_count = 0
         async for message in log_channel.history(limit=None, oldest_first=True):
-            if message.embeds and message.author.bot and message.author.name == "IsraBuy 🌌 APP":
+            # Alteração aqui: Verificando pelo ID do autor da mensagem
+            if message.author.id == LOG_BOT_ID and message.embeds:
                 embed = message.embeds[0]
                 if embed.title and "Log de Compra" in embed.title:
                     cursor.execute("SELECT id FROM sales WHERE message_id = ?", (message.id,))
@@ -128,8 +127,8 @@ class IsraBuyBot(commands.Bot):
         if message.author == self.user:
             return
 
-        # Nova venda
-        if message.channel.id == LOG_CHANNEL_ID and message.embeds and message.author.bot and message.author.name == "IsraBuy 🌌 APP":
+        # Nova venda - Alteração aqui: Verificando pelo ID do autor da mensagem
+        if message.channel.id == LOG_CHANNEL_ID and message.author.id == LOG_BOT_ID and message.embeds:
             embed = message.embeds[0]
             if embed.title and "Log de Compra" in embed.title:
                 attendant_name = next((field.value.strip().replace('@', '') for field in embed.fields if field.name == "Atendente"), None)
@@ -154,12 +153,13 @@ class IsraBuyBot(commands.Bot):
                     conn.close()
                     await self.update_total_sales_message()
 
-        # Correção de atendente
+        # Correção de atendente (não precisa de alteração)
         if message.channel.id == LOG_CHANNEL_ID and message.content.lower().startswith("atendente") and message.mentions:
             corrected_attendant = message.mentions[0]
             message_to_correct = None
             async for old_message in message.channel.history(limit=10, before=message):
-                if old_message.embeds and old_message.author.bot and old_message.author.name == "IsraBuy 🌌 APP":
+                # Aqui também verificamos pelo ID, para garantir
+                if old_message.author.id == LOG_BOT_ID and old_message.embeds:
                     if old_message.embeds[0].title and "Log de Compra" in old_message.embeds[0].title:
                         message_to_correct = old_message
                         break
