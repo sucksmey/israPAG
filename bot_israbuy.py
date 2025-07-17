@@ -39,24 +39,16 @@ def setup_database():
     conn.commit()
     conn.close()
 
-# --- FUNÇÃO AUXILIAR ADICIONADA ---
+# --- FUNÇÃO AUXILIAR ---
 def find_member_by_name(guild, name_to_find):
-    """
-    Busca um membro de forma inteligente, primeiro pelo apelido (display_name), 
-    depois pelo nome de usuário (name). Ignora maiúsculas/minúsculas.
-    """
     name_lower = name_to_find.lower()
-    # Tenta encontrar pelo apelido (nickname)
     member = discord.utils.find(lambda m: m.display_name.lower() == name_lower, guild.members)
-    if member:
-        return member
-    # Se não achar, tenta pelo nome de usuário
+    if member: return member
     member = discord.utils.find(lambda m: m.name.lower() == name_lower, guild.members)
     return member
 
 # --- BOTÕES DE CORREÇÃO ---
 class CorrectionView(discord.ui.View):
-    # (Nenhuma alteração necessária aqui)
     def __init__(self, original_message_id, new_attendant):
         super().__init__(timeout=300)
         self.original_message_id = original_message_id
@@ -68,7 +60,7 @@ class CorrectionView(discord.ui.View):
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE sales SET attendant_id = ?, attendant_name = ? WHERE message_id = ?",
-            (self.new_attendant.id, self.new_attendant.display_name, self.original_message_id) # Usar display_name
+            (self.new_attendant.id, self.new_attendant.display_name, self.original_message_id)
         )
         conn.commit()
         conn.close()
@@ -102,57 +94,25 @@ class IsraBuyBot(commands.Bot):
 
     async def on_ready(self):
         print(f'Bot conectado como {self.user}')
-        print('Iniciando varredura do histórico de logs com lógica de busca corrigida...')
-        await self.scan_history()
-
-    async def scan_history(self):
-        log_channel = self.get_channel(LOG_CHANNEL_ID)
-        if not log_channel:
-            print(f"ERRO: Canal de log com ID {LOG_CHANNEL_ID} não encontrado.")
-            return
-
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        processed_count = 0
-        guild = self.get_guild(GUILD_ID) # Pega a guild uma vez fora do loop
-
-        async for message in log_channel.history(limit=None, oldest_first=True):
-            if message.author.id == LOG_BOT_ID and message.embeds:
-                embed = message.embeds[0]
-                if embed.title and "Log de Compra" in embed.title:
-                    cursor.execute("SELECT id FROM sales WHERE message_id = ?", (message.id,))
-                    if cursor.fetchone() is None:
-                        attendant_name_str = next((field.value.strip().replace('@', '') for field in embed.fields if field.name == "Atendente"), None)
-                        if attendant_name_str:
-                            # --- LÓGICA DE BUSCA DE MEMBRO CORRIGIDA ---
-                            attendant_member = find_member_by_name(guild, attendant_name_str)
-                            attendant_id = attendant_member.id if attendant_member else 0
-                            
-                            cursor.execute(
-                                "INSERT INTO sales (message_id, attendant_id, attendant_name) VALUES (?, ?, ?)",
-                                (message.id, attendant_id, attendant_name_str)
-                            )
-                            processed_count += 1
-        conn.commit()
-        conn.close()
-        print(f'Varredura concluída! {processed_count} novas vendas históricas foram registradas.')
-        await self.update_total_sales_message()
+        # Não precisa mais de scan, a menos que o DB seja zerado.
+        # print('Verificando o banco de dados...')
 
     async def on_message(self, message: discord.Message):
+        if message.author.bot and message.author.id != LOG_BOT_ID:
+            # Ignora outros bots, mas não o bot de log
+            return
         if message.author == self.user:
             return
 
-        # Nova venda
+        # --- Lógica de Nova Venda ---
         if message.channel.id == LOG_CHANNEL_ID and message.author.id == LOG_BOT_ID and message.embeds:
             embed = message.embeds[0]
             if embed.title and "Log de Compra" in embed.title:
                 attendant_name_str = next((field.value.strip().replace('@', '') for field in embed.fields if field.name == "Atendente"), None)
                 if attendant_name_str:
                     guild = self.get_guild(GUILD_ID)
-                    # --- LÓGICA DE BUSCA DE MEMBRO CORRIGIDA ---
                     attendant_member = find_member_by_name(guild, attendant_name_str)
                     attendant_id = attendant_member.id if attendant_member else 0
-                    
                     conn = sqlite3.connect(DB_PATH)
                     cursor = conn.cursor()
                     cursor.execute(
@@ -170,20 +130,26 @@ class IsraBuyBot(commands.Bot):
                     conn.close()
                     await self.update_total_sales_message()
 
-        # --- LÓGICA DE CORREÇÃO APRIMORADA ---
-        if message.channel.id == LOG_CHANNEL_ID and message.content.lower().startswith("atendente") and message.mentions:
-            corrected_attendant = message.mentions[0]
+        # --- LÓGICA DE CORREÇÃO FINAL E CORRIGIDA ---
+        if message.channel.id == LOG_CHANNEL_ID and "atendente" in message.content.lower() and message.mentions:
+            
+            # Filtra a lista de menções para encontrar o alvo real (ignora o próprio bot)
+            target_mention = discord.utils.find(lambda m: m.id != self.user.id, message.mentions)
+
+            if not target_mention:
+                # Se só o próprio bot foi mencionado, avisa o usuário.
+                await message.reply("Você precisa mencionar o atendente correto (e não eu!).", delete_after=10)
+                return
+
+            corrected_attendant = target_mention
             message_to_correct = None
 
-            # Se for uma resposta a uma mensagem, corrige a mensagem respondida
             if message.reference and message.reference.message_id:
-                # Tenta buscar a mensagem original a que o usuário respondeu
                 try:
                     message_to_correct = await message.channel.fetch_message(message.reference.message_id)
                 except discord.NotFound:
-                    message_to_correct = None # A mensagem original pode ter sido deletada
+                    message_to_correct = None
             
-            # Se não for uma resposta, pega a última mensagem de log antes do comando
             if not message_to_correct:
                 async for old_message in message.channel.history(limit=10, before=message):
                     if old_message.author.id == LOG_BOT_ID and old_message.embeds:
@@ -195,8 +161,8 @@ class IsraBuyBot(commands.Bot):
                 view = CorrectionView(message_to_correct.id, corrected_attendant)
                 await message.reply(f"Você deseja corrigir o atendente da venda (`{message_to_correct.id}`) para {corrected_attendant.mention}?", view=view)
 
+
     async def update_total_sales_message(self):
-        # ... (Nenhuma alteração necessária aqui)
         salary_channel = self.get_channel(SALARY_CHANNEL_ID)
         if not salary_channel: return
         conn = sqlite3.connect(DB_PATH)
@@ -215,13 +181,39 @@ class IsraBuyBot(commands.Bot):
         else:
             await salary_channel.send(content)
 
+# O scan_history foi removido do on_ready para não rodar toda vez,
+# mas mantido aqui caso você precise dele no futuro (ex: zerando o DB).
+# Se precisar rodar de novo, adicione uma chamada a ele dentro do on_ready.
+async def scan_history(bot):
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if not log_channel: return
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    processed_count = 0
+    guild = bot.get_guild(GUILD_ID)
+    async for message in log_channel.history(limit=None, oldest_first=True):
+        if message.author.id == LOG_BOT_ID and message.embeds:
+            embed = message.embeds[0]
+            if embed.title and "Log de Compra" in embed.title:
+                cursor.execute("SELECT id FROM sales WHERE message_id = ?", (message.id,))
+                if cursor.fetchone() is None:
+                    attendant_name_str = next((field.value.strip().replace('@', '') for field in embed.fields if field.name == "Atendente"), None)
+                    if attendant_name_str:
+                        attendant_member = find_member_by_name(guild, attendant_name_str)
+                        attendant_id = attendant_member.id if attendant_member else 0
+                        cursor.execute("INSERT INTO sales (message_id, attendant_id, attendant_name) VALUES (?, ?, ?)", (message.id, attendant_id, attendant_name_str))
+                        processed_count += 1
+    conn.commit()
+    conn.close()
+    print(f'Scan manual concluído! {processed_count} novas vendas históricas foram registradas.')
+    await bot.update_total_sales_message()
+
 # --- COMANDOS E INICIALIZAÇÃO ---
 bot = IsraBuyBot()
 
 @bot.tree.command(name="salario", description="Calcula o salário de um atendente com base nas vendas.")
 @app_commands.describe(membro="O membro para calcular o salário.")
 async def salario(interaction: discord.Interaction, membro: discord.Member):
-    # ... (Nenhuma alteração necessária aqui)
     await interaction.response.defer(ephemeral=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
