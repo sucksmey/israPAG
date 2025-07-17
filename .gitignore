@@ -1,0 +1,9 @@
+# Ignorar o arquivo de variáveis de ambiente
+.env
+
+# Ignorar o banco de dados SQLite
+sales_data.db
+*.db-journal
+
+# Ignorar pastas do Python
+__pycache__/
