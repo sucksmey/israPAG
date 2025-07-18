@@ -10,7 +10,7 @@ import datetime
 load_dotenv()
 BOT_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = 897650833888534588
-DB_PATH = '/data/sales_data.db' # Usando o mesmo DB, mas tabelas diferentes
+DB_PATH = '/data/sales_data.db'
 
 # --- CONFIGURAÇÕES DE SALÁRIO DE ATENDENTES ---
 LOG_CHANNEL_ID = 1382340441579720846
@@ -21,14 +21,14 @@ COMISSAO_POR_VENDA_BRL = 0.34
 META_VENDAS = 2942
 META_BRL = 1000.00
 
-# --- CONFIGURAÇÕES DE FIDELIDADE ---
-ADMIN_VENDAS_ROLE_ID = 1379126175317622965 # Este você já tinha me passado, está correto!
+# --- CONFIGURAÇÕES DE FIDELIDADE (COM IDs CORRIGIDOS) ---
+ADMIN_VENDAS_ROLE_ID = 1379126175317622965
 LOYALTY_NOTIFICATION_CHANNEL_ID = 1380180609653018735
 
-# IDs dos cargos de fidelidade (COLOQUE OS IDs CORRETOS AQUI)
-LOYALTY_ROLE_10_ID = 123456789012345678  # Substitua pelo ID do cargo de 10 compras
-LOYALTY_ROLE_50_ID = 123456789012345678  # Substitua pelo ID do cargo de 50 compras
-LOYALTY_ROLE_100_ID = 123456789012345678 # Substitua pelo ID do cargo de 100 compras
+# IDs dos cargos de fidelidade
+LOYALTY_ROLE_10_ID = 1394109025246773340
+LOYALTY_ROLE_50_ID = 1394109339316392047
+LOYALTY_ROLE_100_ID = 1394109339316392047 # Assumindo o mesmo ID de 50, conforme informado.
 
 LOYALTY_TIERS = {
     10: {"name": "Cliente Fiel 🥉", "reward": "1.000 Robux por R$35 na sua próxima compra!", "role_id": LOYALTY_ROLE_10_ID, "emoji": "🥉"},
@@ -46,14 +46,12 @@ def setup_database():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    # Tabela para salário dos atendentes
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL UNIQUE,
             attendant_id INTEGER NOT NULL, attendant_name TEXT NOT NULL
         )
     ''')
-    # Tabela para fidelidade dos clientes
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS loyalty_purchases (
             id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL,
@@ -121,7 +119,6 @@ class IsraBuyBot(commands.Bot):
         if message.author.bot and message.author.id != LOG_BOT_ID: return
 
         # --- Lógica de Salário de Atendente ---
-        # Registra uma nova venda para o sistema de SALÁRIO
         if message.channel.id == LOG_CHANNEL_ID and message.author.id == LOG_BOT_ID and message.embeds:
             embed = message.embeds[0]
             if embed.title and "Log de Compra" in embed.title:
@@ -144,7 +141,6 @@ class IsraBuyBot(commands.Bot):
                     conn.close()
                     await self.update_total_sales_message()
 
-        # Corrige o atendente de uma venda para o sistema de SALÁRIO
         if message.channel.id == LOG_CHANNEL_ID and "atendente" in message.content.lower() and message.mentions:
             target_mention = discord.utils.find(lambda m: not m.bot, message.mentions)
             if not target_mention: return
@@ -185,7 +181,7 @@ class IsraBuyBot(commands.Bot):
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM loyalty_purchases WHERE customer_id = ?", (customer.id,))
-            purchase_count = cursor.fetchone()[0]
+            purchase_count = cursor.fetchone()[0] or 0
             conn.close()
             log_message, dm_message = "", ""
 
@@ -228,7 +224,7 @@ async def salario(interaction: discord.Interaction, membro: discord.Member):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM sales WHERE attendant_id = ?", (membro.id,))
-    sales_count = cursor.fetchone()[0]
+    sales_count = cursor.fetchone()[0] or 0
     conn.close()
     salary_robux = sales_count * COMISSAO_POR_VENDA_ROBUX
     salary_brl = sales_count * COMISSAO_POR_VENDA_BRL
