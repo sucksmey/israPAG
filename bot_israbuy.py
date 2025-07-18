@@ -21,14 +21,12 @@ COMISSAO_POR_VENDA_BRL = 0.34
 META_VENDAS = 2942
 META_BRL = 1000.00
 
-# --- CONFIGURAÇÕES DE FIDELIDADE (COM IDs CORRIGIDOS) ---
+# --- CONFIGURAÇÕES DE FIDELIDADE ---
 ADMIN_VENDAS_ROLE_ID = 1379126175317622965
 LOYALTY_NOTIFICATION_CHANNEL_ID = 1380180609653018735
-
-# IDs dos cargos de fidelidade
 LOYALTY_ROLE_10_ID = 1394109025246773340
 LOYALTY_ROLE_50_ID = 1394109339316392047
-LOYALTY_ROLE_100_ID = 1394109339316392047 # Assumindo o mesmo ID de 50, conforme informado.
+LOYALTY_ROLE_100_ID = 1394109339316392047
 
 LOYALTY_TIERS = {
     10: {"name": "Cliente Fiel 🥉", "reward": "1.000 Robux por R$35 na sua próxima compra!", "role_id": LOYALTY_ROLE_10_ID, "emoji": "🥉"},
@@ -41,35 +39,21 @@ LOYALTY_TIERS = {
     100: {"name": "Lenda da Israbuy 🏆", "reward": "Mural dos Deuses, 1.000 Robux grátis e acesso permanente a promoções VIP!", "role_id": LOYALTY_ROLE_100_ID, "emoji": "🏆"}
 }
 
-# --- BANCO DE DADOS ---
 def setup_database():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sales (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL UNIQUE,
-            attendant_id INTEGER NOT NULL, attendant_name TEXT NOT NULL
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS loyalty_purchases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL,
-            admin_id INTEGER NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    cursor.execute('CREATE TABLE IF NOT EXISTS sales (id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL UNIQUE, attendant_id INTEGER NOT NULL, attendant_name TEXT NOT NULL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS loyalty_purchases (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL, admin_id INTEGER NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
     conn.commit()
     conn.close()
 
-# --- FUNÇÕES AUXILIARES ---
 def find_member_by_name(guild, name_to_find):
     name_lower = name_to_find.lower()
     member = discord.utils.find(lambda m: m.display_name.lower() == name_lower, guild.members)
     if member: return member
-    member = discord.utils.find(lambda m: m.name.lower() == name_lower, guild.members)
-    return member
+    return discord.utils.find(lambda m: m.name.lower() == name_lower, guild.members)
 
-# --- CLASSE DA VIEW DE CORREÇÃO (SISTEMA DE SALÁRIO) ---
 class CorrectionView(discord.ui.View):
     def __init__(self, bot_instance, original_message_id, new_attendant):
         super().__init__(timeout=300)
@@ -97,7 +81,6 @@ class CorrectionView(discord.ui.View):
         for item in self.children: item.disabled = True
         await interaction.message.edit(view=self)
 
-# --- CLASSE PRINCIPAL DO BOT ---
 class IsraBuyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -117,8 +100,6 @@ class IsraBuyBot(commands.Bot):
     async def on_message(self, message: discord.Message):
         if message.author.id == self.user.id: return
         if message.author.bot and message.author.id != LOG_BOT_ID: return
-
-        # --- Lógica de Salário de Atendente ---
         if message.channel.id == LOG_CHANNEL_ID and message.author.id == LOG_BOT_ID and message.embeds:
             embed = message.embeds[0]
             if embed.title and "Log de Compra" in embed.title:
@@ -140,7 +121,6 @@ class IsraBuyBot(commands.Bot):
                                 await salary_channel.send(f"🎉 Parabéns {attendant_member.mention}! Você alcançou **{sales_count}** vendas!")
                     conn.close()
                     await self.update_total_sales_message()
-
         if message.channel.id == LOG_CHANNEL_ID and "atendente" in message.content.lower() and message.mentions:
             target_mention = discord.utils.find(lambda m: not m.bot, message.mentions)
             if not target_mention: return
@@ -173,7 +153,6 @@ class IsraBuyBot(commands.Bot):
         if message_to_edit: await message_to_edit.edit(content=content)
         else: await salary_channel.send(content)
 
-    # --- Lógica de Fidelidade de Clientes ---
     async def check_loyalty_milestones(self, interaction: discord.Interaction, customer: discord.Member):
         try:
             guild = interaction.guild
@@ -184,11 +163,9 @@ class IsraBuyBot(commands.Bot):
             purchase_count = cursor.fetchone()[0] or 0
             conn.close()
             log_message, dm_message = "", ""
-
             if purchase_count == 1:
                 dm_message = f"Olá, {customer.display_name}! Boas-vindas ao nosso Programa de Fidelidade! Agradecemos muito pela sua primeira compra. A cada nova compra, você fica mais perto de ganhar prêmios incríveis. Use **/beneficiosfidelidade** para ver as recompensas!"
                 log_message = f"✅ DM de boas-vindas à fidelidade enviada para {customer.mention}."
-
             elif purchase_count in LOYALTY_TIERS:
                 tier_data = LOYALTY_TIERS[purchase_count]
                 if notification_channel:
@@ -201,9 +178,6 @@ class IsraBuyBot(commands.Bot):
                 if tier_data['role_id']:
                     role_to_add = guild.get_role(tier_data['role_id'])
                     if role_to_add: await customer.add_roles(role_to_add, reason=f"Atingiu {purchase_count} compras.")
-            else:
-                return
-
             if dm_message:
                 try:
                     await customer.send(dm_message)
@@ -214,8 +188,6 @@ class IsraBuyBot(commands.Bot):
             print(f"Erro ao verificar milestones de fidelidade para {customer.name}: {e}")
 
 bot = IsraBuyBot()
-
-# --- COMANDOS ---
 
 @bot.tree.command(name="salario", description="Calcula o salário de um atendente com base nas vendas.")
 @app_commands.describe(membro="O membro para calcular o salário.")
@@ -243,29 +215,23 @@ async def salario(interaction: discord.Interaction, membro: discord.Member):
 async def beneficiosfidelidade(interaction: discord.Interaction, membro: discord.Member = None):
     target_user = membro or interaction.user
     is_self_check = not membro
-
     if not is_self_check and not interaction.user.guild_permissions.administrator:
         admin_role = interaction.guild.get_role(ADMIN_VENDAS_ROLE_ID)
         if not (admin_role and admin_role in interaction.user.roles):
             return await interaction.response.send_message("❌ Você não tem permissão para ver os benefícios de outros membros.", ephemeral=True)
-
     await interaction.response.defer(ephemeral=not is_self_check)
-
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM loyalty_purchases WHERE customer_id = ?", (target_user.id,))
     purchase_count = cursor.fetchone()[0] or 0
     conn.close()
-
     embed = discord.Embed(title=f"🌟 Programa de Fidelidade de {target_user.display_name}",
         description=f"Quanto mais compras, mais benefícios exclusivos são desbloqueados.\n\n**{target_user.display_name} tem atualmente `{purchase_count}` compras verificadas.**",
         color=discord.Color.gold())
     embed.set_thumbnail(url=target_user.display_avatar.url)
-
     for count, data in LOYALTY_TIERS.items():
         status_emoji = "✅" if purchase_count >= count else "❌"
         embed.add_field(name=f"{status_emoji} {count} Compras: {data['name']}", value=data['reward'], inline=False)
-    
     embed.set_footer(text="As recompensas são aplicadas automaticamente ao atingir a meta.")
     await interaction.followup.send(embed=embed)
 
@@ -273,43 +239,51 @@ async def beneficiosfidelidade(interaction: discord.Interaction, membro: discord
 @app_commands.describe(cliente="O cliente que realizou a compra.")
 @app_commands.checks.has_role(ADMIN_VENDAS_ROLE_ID)
 async def adicionarfidelidade(interaction: discord.Interaction, cliente: discord.Member):
-    await interaction.response.defer(ephemeral=True)
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO loyalty_purchases (customer_id, admin_id) VALUES (?, ?)", (cliente.id, interaction.user.id))
-    conn.commit()
-    conn.close()
-
-    await interaction.followup.send(f"✅ Compra de fidelidade registrada para {cliente.mention}!", ephemeral=True)
-    
-    notification_channel = interaction.guild.get_channel(LOYALTY_NOTIFICATION_CHANNEL_ID)
-    if notification_channel:
+    try:
+        await interaction.response.defer(ephemeral=True)
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM loyalty_purchases WHERE customer_id = ?", (cliente.id,))
-        purchase_count = cursor.fetchone()[0] or 0
+        cursor.execute("INSERT INTO loyalty_purchases (customer_id, admin_id) VALUES (?, ?)", (cliente.id, interaction.user.id))
+        conn.commit()
         conn.close()
-        
-        public_embed = discord.Embed(title=f"🌟 Programa de Fidelidade de {cliente.display_name}",
-                                     description=f"**{cliente.display_name} tem atualmente `{purchase_count}` compras verificadas.**",
-                                     color=discord.Color.gold())
-        public_embed.set_thumbnail(url=cliente.display_avatar.url)
-        for count, data in LOYALTY_TIERS.items():
-            status_emoji = "✅" if purchase_count >= count else "❌"
-            public_embed.add_field(name=f"{status_emoji} {count} Compras: {data['name']}", value=data['reward'], inline=False)
-        
-        await notification_channel.send(embed=public_embed, delete_after=3600)
-
-    await bot.check_loyalty_milestones(interaction, cliente)
+        await interaction.followup.send(f"✅ Compra de fidelidade registrada para {cliente.mention}!", ephemeral=True)
+        notification_channel = interaction.guild.get_channel(LOYALTY_NOTIFICATION_CHANNEL_ID)
+        if notification_channel:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM loyalty_purchases WHERE customer_id = ?", (cliente.id,))
+            purchase_count = cursor.fetchone()[0] or 0
+            conn.close()
+            public_embed = discord.Embed(title=f"🌟 Programa de Fidelidade de {cliente.display_name}",
+                                         description=f"**{cliente.display_name} tem atualmente `{purchase_count}` compras verificadas.**",
+                                         color=discord.Color.gold())
+            public_embed.set_thumbnail(url=cliente.display_avatar.url)
+            for count, data in LOYALTY_TIERS.items():
+                status_emoji = "✅" if purchase_count >= count else "❌"
+                public_embed.add_field(name=f"{status_emoji} {count} Compras: {data['name']}", value=data['reward'], inline=False)
+            await notification_channel.send(embed=public_embed, delete_after=3600)
+        await bot.check_loyalty_milestones(interaction, cliente)
+    except discord.NotFound as e:
+        if e.code == 10062: # Código para "Unknown Interaction"
+            try:
+                await interaction.user.send("😕 **Ocorreu um erro de timeout!** O Discord demorou muito para responder. Por favor, tente usar o comando novamente em alguns segundos.")
+            except discord.Forbidden:
+                pass # Não pode enviar DM, ignora silenciosamente.
+        else:
+            raise e # Re-levanta outros erros "NotFound"
 
 @adicionarfidelidade.error
 async def adicionarfidelidade_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    # O erro de timeout será tratado dentro do próprio comando agora.
+    # Esta função cuidará de outros erros, como falta de permissão.
     if isinstance(error, app_commands.MissingRole):
-        await interaction.response.send_message("❌ Você não tem permissão para usar este comando.", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"😕 Ocorreu um erro: {error}", ephemeral=True)
-        raise error
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ Você não tem permissão para usar este comando.", ephemeral=True)
+    elif not isinstance(error, app_commands.CommandInvokeError) or not isinstance(error.original, discord.NotFound):
+        # Evita responder duas vezes ao erro de timeout que já foi tratado
+        print(f"Erro não tratado no comando /adicionarfidelidade: {error}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"😕 Ocorreu um erro inesperado. Por favor, tente novamente.", ephemeral=True)
 
 if __name__ == "__main__":
     setup_database()
