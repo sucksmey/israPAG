@@ -22,13 +22,13 @@ META_VENDAS = 2942
 META_BRL = 1000.00
 
 # --- CONFIGURAÇÕES DE FIDELIDADE ---
-ADMIN_VENDAS_ROLE_ID = 1379126175317622965
+ADMIN_VENDAS_ROLE_ID = 1379126175317622965 # Este você já tinha me passado, está correto!
 LOYALTY_NOTIFICATION_CHANNEL_ID = 1380180609653018735
 
-# IDs dos cargos de fidelidade (coloque os IDs corretos aqui ou deixe None)
-LOYALTY_ROLE_10_ID = None 
-LOYALTY_ROLE_50_ID = None
-LOYALTY_ROLE_100_ID = None
+# IDs dos cargos de fidelidade (COLOQUE OS IDs CORRETOS AQUI)
+LOYALTY_ROLE_10_ID = 123456789012345678  # Substitua pelo ID do cargo de 10 compras
+LOYALTY_ROLE_50_ID = 123456789012345678  # Substitua pelo ID do cargo de 50 compras
+LOYALTY_ROLE_100_ID = 123456789012345678 # Substitua pelo ID do cargo de 100 compras
 
 LOYALTY_TIERS = {
     10: {"name": "Cliente Fiel 🥉", "reward": "1.000 Robux por R$35 na sua próxima compra!", "role_id": LOYALTY_ROLE_10_ID, "emoji": "🥉"},
